@@ -54,6 +54,20 @@ function applyThinkingHack(reqBody) {
 fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
 const logStream = fs.createWriteStream(LOG_FILE, { flags: 'a' });
 
+// 并发分流:LOG_DIR 模式下,按请求头 x-claude-code-session-id 把每条记录写到
+// LOG_DIR/<sid>.jsonl(无 sid 的后台探测进 _no_session.jsonl)。一个共享代理即可服务
+// 多个并发 sc claude 会话,事后按 sid 各自重建。未设 LOG_DIR 时走原单文件 LOG_FILE。
+const LOG_DIR = process.env.LOG_DIR || '';
+const _dirStreams = {};
+if (LOG_DIR) fs.mkdirSync(LOG_DIR, { recursive: true });
+function dirStream(sid) {
+  const key = (sid && /^[0-9a-fA-F-]{8,}$/.test(sid)) ? sid : '_no_session';
+  if (!_dirStreams[key]) {
+    _dirStreams[key] = fs.createWriteStream(path.join(LOG_DIR, key + '.jsonl'), { flags: 'a' });
+  }
+  return _dirStreams[key];
+}
+
 function safeJSON(buf) {
   try { return JSON.parse(buf.toString('utf8')); } catch { return null; }
 }
@@ -112,8 +126,15 @@ function decodeBody(buf, encoding) {
 }
 
 function writeLog(record) {
-  try { logStream.write(JSON.stringify(record) + '\n'); }
-  catch (e) { try { process.stderr.write('[proxy] log write failed: ' + e + '\n'); } catch {} }
+  try {
+    const line = JSON.stringify(record) + '\n';
+    if (LOG_DIR) {
+      const sid = (record.request_headers || {})['x-claude-code-session-id'];
+      dirStream(sid).write(line);
+    } else {
+      logStream.write(line);
+    }
+  } catch (e) { try { process.stderr.write('[proxy] log write failed: ' + e + '\n'); } catch {} }
 }
 
 const server = http.createServer((clientReq, clientRes) => {
