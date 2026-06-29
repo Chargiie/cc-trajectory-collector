@@ -76,7 +76,8 @@ TC_THINKING_HACK=1 python3 collect.py "你的 query"
 cc-trajectory-collector/                 # 代码仓库
 ├── config.py                 # 端口/上游/模型/key/超时/RUNS_DIR/THINKING_HACK
 ├── proxy.js                  # 透明日志反向代理(Node 零依赖)+ thinking-hack 请求改写
-├── collect.py                # 主编排:query -> SFT json + HTML
+├── collect.py                # 单条编排:query -> SFT json + HTML
+├── collect_concurrent.py     # 并发编排:多 query 共享代理 + 按 session 分流
 ├── lib/
 │   ├── pty_driver.py         # PTY 驱动交互式 sc claude + 完成检测 + 清启动框
 │   ├── build_trajectory.py   # calls.jsonl -> 轨迹(逐响应拼接/跨压缩 + thinking 解析/剥脚手架)
@@ -95,20 +96,64 @@ cc-trajectory-collector/                 # 代码仓库
     └── proxy.out
 ```
 
-## 6. 部署
+## 6. 启动前准备(必读)
 
-**依赖**:Node.js(跑 `proxy.js`,零三方依赖)· Python 3(纯标准库)· `sc`(stepcode/Claude Code,已鉴权)。
+跑之前,这些必须就位,否则会失败或能力降级:
 
-**自带 PDF skill**:`plugins/pdf-tools/` 打包了 `travel-guide-mobile-pdf` / `amap-mcp` / `step-search`,采集时用 `sc claude --plugin-dir` 自动加载,无需手动装。要让 PDF 链路真跑通,内层机器还需(否则降级不崩):
-- **Playwright + Chromium**(render PDF):`npm i -g playwright && npx playwright install chromium`
+**① 基础依赖**
+- **Node.js**(跑 `proxy.js`,零三方依赖)、**Python 3**(纯标准库)。
+- **`sc`(stepcode / Claude Code)已安装且已鉴权** —— 关键:先确认 `sc claude` 自己能正常跑通一句话(否则采集器也跑不起来)。
+
+**② API key(注入内层会话)**
+采集器会把 key 透传给内层 sc claude。确保以下任一环境变量已设(`config.API_KEY` 按序取):
+```bash
+export ANTHROPIC_AUTH_TOKEN=<你的 StepFun/模型代理 key>   # 或 ANTHROPIC_API_KEY / MODEL_PROXY_API_KEY / TC_API_KEY
+```
+
+**③ baseurl 会被临时改写 → 用完自动还原**
+采集器运行时会把 `sc system baseurl` 指向本地代理,**正常/异常结束都会还原**。若进程被 `SIGKILL` 强杀未还原,手动:
+```bash
+sc system baseurl https://models-proxy.stepfun-inc.com
+```
+跑之前可先 `sc system baseurl` 确认它是真上游(不是某个 `127.0.0.1:...` 死代理)。
+
+**④ 产物目录在 git 仓库外(默认已配好)**
+`RUNS_DIR` 默认 `~/Desktop/cc-trajectory-runs`(仓库外),**别改回项目目录内**(否则 git 提交记录会泄漏进 system prompt,见 §8)。
+
+**⑤ PDF 链路额外依赖(只做 PDF 攻略类任务才需要)**
+`plugins/pdf-tools/` 已自带 `travel-guide-mobile-pdf` / `amap-mcp` / `step-search` 三个 skill(用 `--plugin-dir` 自动加载,无需手动装)。但要让 PDF 真跑通,内层机器还需(缺了只是降级,不崩):
+- **Playwright + Chromium**(render PDF):`npm i -g playwright && npx playwright install chromium`(render 时 `NODE_PATH` 指向全局 node_modules)。
 - **`STEPFUN_API_KEY`**(step-search 联网)、**`AMAP_MCP_KEY`**(amap 地图);env 随 `os.environ` 透传给内层 cc。
 
+**⑥ clone**
 ```bash
-git clone -b feat/content-thinking-hack https://github.com/Chargiie/cc-trajectory-collector.git
+git clone -b feat/single-machine-concurrency https://github.com/Chargiie/cc-trajectory-collector.git
 cd cc-trajectory-collector
-node -v && python3 -V && sc system baseurl     # 确认依赖
-python3 collect.py "带爸妈去颐和园半日游，做份手机看的 PDF 攻略"
+node -v && python3 -V && sc system baseurl     # 一键自检
 ```
+
+## 6.5 怎么用
+
+**单条采集**:
+```bash
+python3 collect.py "你的 query"
+# 产物在 ~/Desktop/cc-trajectory-runs/<时间戳>_<slug>/:trajectory_sft.json + trajectory.html
+```
+
+**原始 CoT 模式**(thinking hack,见 §4):
+```bash
+TC_THINKING_HACK=1 python3 collect.py "你的 query"
+```
+
+**并发采集(单机,无 Docker)**:多个 query 同时跑,共享一个代理、按 session 分流。
+```bash
+python3 collect_concurrent.py "query1" "query2" "query3"
+# 或从文件(每行一个 query):
+python3 collect_concurrent.py --queries-file queries.txt
+# 也支持 TC_THINKING_HACK=1 / --model / --max-seconds / --no-html
+```
+> ⚠ 并发的各 query **必须互不相同**(代理按 query 内容认领各自的 session 文件;相同 query 无法区分)。
+> 每条 run 各自独立 `workspace/` 和 `TMPDIR`,产物各落自己目录。
 
 ## 7. 配置(`config.py`)
 
@@ -147,7 +192,7 @@ python3 collect.py "带爸妈去颐和园半日游，做份手机看的 PDF 攻�
 - **偶发 SSE 截断**:上游链路(火山 `volcalb` 等)**间歇性**掐断流式响应,末条 `stop_reason=None`、无 `message_stop`。非确定性,重跑大概率成功;无限时模式下会一直挂,需 `Ctrl-C`。
 - **交互式反问会挂起**:agent 调 `AskUserQuestion` 无人应答会干等。区分:**截断**=无 `message_stop`;**反问**=响应完整且末工具是 `AskUserQuestion`。
 - **超长 run 触发上下文压缩**:`build_trajectory` 已用「逐响应拼接」跨压缩还原,不丢轮。
-- **暂不支持安全并发**:`sc system baseurl` 是**全局**配置,多 run 并发会互相覆盖;PDF skill 写死 `/tmp/pg-*.png` 也会撞。要真并发需走容器/VM(各自独立 baseurl/HOME/tmp),或验证 `--settings` 能否按进程设 baseurl。
+- **单机并发已支持**(`collect_concurrent.py`):因 `sc system baseurl` 是全局值、macOS 上无法按进程设(env/假HOME/`STEPCODE_*` 全被忽略),改用「一个共享代理 + 按 `x-claude-code-session-id` 分流」;各 run 独立 workspace/TMPDIR,skill 渲染走 `$TMPDIR/pg`。**约束**:并发各 query 必须互不相同(按 query 认领 session 文件)。
 - **模型差异**:复杂"排版迭代收敛"类任务上,`step-3.7-flash` 易反复横跳/收不敛;`claude-opus` 稳定。
 
 ## 10. 安全注意
