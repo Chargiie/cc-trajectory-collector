@@ -15,6 +15,41 @@ const { URL } = require('url');
 const PORT = parseInt(process.env.PROXY_PORT || '8787', 10);
 const UPSTREAM = new URL(process.env.UPSTREAM_URL || 'https://models-proxy.stepfun-inc.com');
 const LOG_FILE = process.env.LOG_FILE || path.join(__dirname, 'logs', 'calls.jsonl');
+const THINKING_HACK = process.env.THINKING_HACK === '1';
+
+// content-thinking hack:关原生 thinking,让模型把 <thinking>...</thinking> 当普通正文输出,
+// 从而拿到「原始完整 CoT」而非 Anthropic 的摘要。只改主 loop 请求(有 system+tools)。
+const HACK_GUIDANCE = [
+  "Reply MUST begin with exactly ONE <thinking>...</thinking> block containing ALL of your reasoning for this turn — ultra detailed: current state, evidence gathered, full plan, and the next action(s).",
+  "Think once, upfront. After the closing </thinking>, do NOT write any further <thinking> blocks in the same reply.",
+  "After the thinking block, respond normally as you otherwise would: your visible reply text to the user and/or native tool calls, whatever this turn needs. Do not suppress your normal user-facing response.",
+  "When the task is finished and no tool is needed, the reply is: the <thinking> block, then your complete final answer to the user.",
+  "Use the native tool-calling interface when a tool is needed; never fabricate tool results — wait for the next observation.",
+].join('\n');
+const HACK_SUFFIX = "\nNow output your ultra detailed thinking block in <thinking>...</thinking>.";
+
+function applyThinkingHack(reqBody) {
+  // 返回(可能改写后的)body buffer;任何异常都退回原 body,绝不影响转发。
+  try {
+    const body = JSON.parse(reqBody.toString('utf8'));
+    if (!body || !Array.isArray(body.messages) || !body.system
+        || !Array.isArray(body.tools) || body.tools.length <= 10) {
+      return reqBody;  // 非主 loop 请求,不动
+    }
+    body.thinking = { type: 'disabled' };
+    delete body.output_config;  // effort 与 thinking 绑定,一并去掉
+    if (Array.isArray(body.system)) body.system.push({ type: 'text', text: HACK_GUIDANCE });
+    else body.system = String(body.system || '') + '\n' + HACK_GUIDANCE;
+    const last = body.messages[body.messages.length - 1];
+    if (last && last.role === 'user') {
+      if (Array.isArray(last.content)) last.content.push({ type: 'text', text: HACK_SUFFIX });
+      else last.content = String(last.content || '') + HACK_SUFFIX;
+    }
+    return Buffer.from(JSON.stringify(body), 'utf8');
+  } catch {
+    return reqBody;
+  }
+}
 
 fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
 const logStream = fs.createWriteStream(LOG_FILE, { flags: 'a' });
@@ -85,7 +120,8 @@ const server = http.createServer((clientReq, clientRes) => {
   const reqChunks = [];
   clientReq.on('data', c => reqChunks.push(c));
   clientReq.on('end', () => {
-    const reqBody = Buffer.concat(reqChunks);
+    let reqBody = Buffer.concat(reqChunks);
+    if (THINKING_HACK && reqBody.length) reqBody = applyThinkingHack(reqBody);
 
     // Build upstream headers: copy verbatim, only fix host. Strip accept-encoding so
     // upstream returns identity -> clean SSE capture (client doesn't require gzip).

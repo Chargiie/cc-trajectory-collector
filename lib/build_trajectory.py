@@ -6,10 +6,61 @@ Claude Code 上下文压缩,history 被摘要重置,跨不过去)。改为按调
 调用的 response 作为一个 assistant 轮,再用各请求里出现过的 tool_result 按 id 回填。
 这样无论压缩多少次都能还原完整动作序列。system/tools 只有代理能拿到(本地 transcript 缺)。
 """
-import json, sys, os
+import json, sys, os, re
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
+
+_THINK_RE = re.compile(r"<thinking(?:\s[^>]*)?>([\s\S]*?)</thinking>", re.I)
+_THINK_TAG = re.compile(r"<thinking(?:\s[^>]*)?>|</thinking>", re.I)
+
+# content-thinking hack 注入的脚手架(须与 proxy.js 保持一致),重建时从数据里剥除,
+# 避免 guidance/suffix 泄漏进最终训练样本的 system / user。
+_HACK_SUFFIX = "\nNow output your ultra detailed thinking block in <thinking>...</thinking>."
+_HACK_ANCHOR = "Reply MUST begin with exactly ONE <thinking>"
+
+
+def _strip_hack_system(text):
+    """system 末尾若被注入了 hack guidance,从锚点切掉。"""
+    i = text.find(_HACK_ANCHOR)
+    return text[:i].rstrip() if i != -1 else text
+
+
+def _strip_hack_text(text):
+    """去掉注入到 user 消息末尾的 hack suffix(含其 <thinking> 字面)。"""
+    return text.replace(_HACK_SUFFIX, '')
+
+
+def _split_thinking(text):
+    """content-thinking hack:抽出**所有**最外层 <thinking>...</thinking> 块(深度感知)。
+    模型可能在 thinking 里**引用含字面 <thinking>...</thinking> 的指令**,形成内层假标签;
+    用配对计数(深度归零才闭合)而非非贪婪正则,避免被内层假闭合标签提前截断。
+    返回 (所有thinking拼接, 去掉全部最外层块后的剩余文本)。无标签则 ('', 原文)。"""
+    spans = []          # 最外层块 (start, end)(含标签)
+    depth = 0
+    start = None
+    for m in _THINK_TAG.finditer(text):
+        if m.group().lower().startswith('</'):
+            if depth > 0:
+                depth -= 1
+                if depth == 0:
+                    spans.append((start, m.end()))
+        else:
+            if depth == 0:
+                start = m.start()
+            depth += 1
+    if not spans:
+        return '', text
+    thinks, rest_parts, last = [], [], 0
+    for s, e in spans:
+        rest_parts.append(text[last:s])
+        block = text[s:e]
+        inner = re.sub(r'^<thinking(?:\s[^>]*)?>', '', block, flags=re.I)
+        inner = re.sub(r'</thinking>$', '', inner, flags=re.I)
+        thinks.append(inner.strip())
+        last = e
+    rest_parts.append(text[last:])
+    return '\n\n'.join(t for t in thinks if t), ''.join(rest_parts).strip()
 
 
 def _is_main(o):
@@ -34,6 +85,7 @@ def build(calls_path):
     sysv = fr.get('system')
     system_text = ('\n'.join(b.get('text', '') if isinstance(b, dict) else str(b) for b in sysv)
                    if isinstance(sysv, list) else (sysv or ''))
+    system_text = _strip_hack_system(system_text)  # 剥除注入的 hack guidance
     tools = fr.get('tools', [])
 
     # 扫所有请求,按 tool_use_id 收集 tool_result(结果出现在产生它的那次 tool_use 之后的请求里;
@@ -99,9 +151,22 @@ def _count_compactions(main):
 
 
 def _norm(content):
-    if isinstance(content, str):
-        return [{"type": "text", "text": content}]
-    return [_clean(b) for b in content if isinstance(b, dict)]
+    blocks = ([{"type": "text", "text": content}] if isinstance(content, str)
+              else [_clean(b) for b in content if isinstance(b, dict)])
+    # content-thinking hack:先剥除注入的 suffix,再把 text 里内联的 <thinking> 拆成 thinking 块
+    out = []
+    for b in blocks:
+        if b.get('type') == 'text' and b.get('text'):
+            b['text'] = _strip_hack_text(b['text'])
+            if '<thinking' in b['text'].lower():
+                think, rest = _split_thinking(b['text'])
+                if think:
+                    out.append({"type": "thinking", "thinking": think, "signature": "", "redacted": False})
+                    if rest:
+                        out.append({"type": "text", "text": rest})
+                    continue
+        out.append(b)
+    return out
 
 
 def _clean(b):
