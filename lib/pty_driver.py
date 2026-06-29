@@ -67,6 +67,10 @@ def run_session(query, cwd, calls_path, port=None, model=None, use_bare=False,
     argv = ["sc", "claude", "--dangerously-skip-permissions", "--model", model]
     if use_bare:
         argv.append("--bare")
+    # 加载自带 plugin(travel-guide-mobile-pdf / amap-mcp / step-search 三个 skill)。
+    plugin_dir = getattr(config, "PLUGIN_DIR", "")
+    if plugin_dir and os.path.isdir(plugin_dir):
+        argv += ["--plugin-dir", plugin_dir]
 
     os.makedirs(cwd, exist_ok=True)
     pid, fd = pty.fork()

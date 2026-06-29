@@ -1,0 +1,8 @@
+{
+  "name": "pdf-tools",
+  "version": "0.1.0",
+  "description": "旅游攻略手机竖屏 PDF 生产三件套：travel-guide-mobile-pdf（HTML→Chromium→PDF 渲染 + 页卡范式 + 版面硬闸自检）、amap-mcp（高德地图 POI/坐标/路线/通勤/天气）、step-search（StepFun 联网搜索）。前置依赖：Playwright+Chromium（PDF render）、STEPFUN_API_KEY（搜索）、AMAP_MCP_KEY 或已注册 amap MCP（地图）。",
+  "author": {
+    "name": "Chargiie"
+  }
+}

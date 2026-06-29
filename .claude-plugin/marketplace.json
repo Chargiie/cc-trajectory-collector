@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "pdf-data-tools",
+  "description": "手机竖屏旅游攻略 PDF 生产工具集：HTML→PDF 渲染与版面自检 + 高德地图真实数据 + StepFun 联网搜索。",
+  "owner": {
+    "name": "Chargiie"
+  },
+  "plugins": [
+    {
+      "name": "pdf-tools",
+      "description": "旅游攻略手机竖屏 PDF 生产三件套：travel-guide-mobile-pdf（HTML→Chromium→PDF，页卡范式+版面硬闸自检）、amap-mcp（高德地图 POI/坐标/路线/通勤/天气）、step-search（StepFun 联网搜索）。需 Playwright + STEPFUN_API_KEY + AMAP_MCP_KEY，详见 plugin README。",
+      "category": "productivity",
+      "source": "./plugins/pdf-tools"
+    }
+  ]
+}

@@ -66,15 +66,30 @@ trajectory-collector/
 - **Python 3**(运行编排与转换脚本,仅用标准库)
 - **`sc`(stepcode / Claude Code)** 已安装并完成鉴权,能正常 `sc claude` 跑通
 
+### 自带 PDF skill(开箱即用)
+本仓 `plugins/pdf-tools/` 打包了 PDF 生产三件套(`travel-guide-mobile-pdf` / `amap-mcp` / `step-search`),
+采集器跑每条 query 时会用 `sc claude --plugin-dir plugins/pdf-tools` **自动加载**进内层 cc——无需手动装 skill。
+(本仓同时是 plugin marketplace:别人想只把 skill 装进自己的 cc,见 `plugins/pdf-tools/README.md`。)
+
+要让 PDF 这条链路**真跑通**,内层 cc 所在机器还需(否则对应能力降级,不崩):
+- **Playwright + Chromium**(render PDF):`npm i -g playwright && npx playwright install chromium`;render 时 `NODE_PATH` 指向全局 node_modules(如 `~/.npm-global/lib/node_modules`)。
+- **`STEPFUN_API_KEY`**(step-search 联网搜索):`export STEPFUN_API_KEY=<key>`。
+- **`AMAP_MCP_KEY`** 或已注册 amap MCP(amap-mcp 地图数据):`export AMAP_MCP_KEY=<key>`。
+
+> 这些 env 会随 `os.environ` 透传给内层 cc;在你的 shell 里 export 好即可。
+
 ### 步骤
 ```bash
-# 1. 放到本地(本项目位于 ~/Desktop/trajectory-collector)
-cd ~/Desktop/trajectory-collector
+# 1. clone 到本地
+git clone https://github.com/Chargiie/cc-trajectory-collector.git
+cd cc-trajectory-collector
 
 # 2. 确认依赖就绪
 node -v && python3 -V && sc system baseurl
 
-# 3. 无需安装任何包(纯标准库 + Node 内置模块)
+# 3. 产一条 PDF 攻略轨迹(自动带上三个 skill)
+python3 collect.py "带爸妈去颐和园半日游，做份手机看的 PDF 攻略"
+# 产物在 runs/<时间戳>_<slug>/:trajectory_sft.json(训练用) + trajectory.html(看)
 ```
 
 ### 配置(`config.py`)

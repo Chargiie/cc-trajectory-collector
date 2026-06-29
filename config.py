@@ -35,3 +35,7 @@ HOME = os.path.expanduser("~")
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 RUNS_DIR = os.path.join(PROJECT_DIR, "runs")
 PROXY_JS = os.path.join(PROJECT_DIR, "proxy.js")
+
+# 自带的 plugin 目录(打包了 travel-guide-mobile-pdf / amap-mcp / step-search 三个 skill);
+# 内层 sc claude 用 --plugin-dir 加载它,从而自动带上这三个 skill。设为空字符串可禁用。
+PLUGIN_DIR = os.environ.get("TC_PLUGIN_DIR", os.path.join(PROJECT_DIR, "plugins", "pdf-tools"))
