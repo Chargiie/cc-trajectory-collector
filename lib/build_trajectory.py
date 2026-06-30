@@ -182,7 +182,10 @@ def _clean(b):
     if t == 'tool_result':
         c = b.get('content')
         if isinstance(c, list):
-            c = ''.join(x.get('text', '') if isinstance(x, dict) else str(x) for x in c)
+            # 多模态:若含 image block 则保留完整数组(base64);否则拼成文本字符串
+            has_image = any(isinstance(x, dict) and x.get('type') == 'image' for x in c)
+            if not has_image:
+                c = ''.join(x.get('text', '') if isinstance(x, dict) else str(x) for x in c)
         return {"type": "tool_result", "tool_use_id": b.get('tool_use_id'), "content": c,
                 "is_error": b.get('is_error', False)}
     return b
