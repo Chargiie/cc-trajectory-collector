@@ -17,6 +17,8 @@
 硬上限 4。给多少 query 都行,信号量保证同时只跑 effective 个,其余排队。
 """
 import argparse, os, sys, json, time, socket, subprocess, shutil, signal, datetime, glob, threading
+import zipfile, csv
+import xml.etree.ElementTree as ET
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
@@ -25,6 +27,76 @@ from lib import build_trajectory, to_sft, render_html, pty_driver
 from collect import slugify, free_port, sc_baseurl_get, sc_baseurl_set, preflight
 
 CONCURRENCY_HARD_MAX = 4   # 任何情况下并发不超过 4
+_XL_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+
+
+def _read_xlsx_rows(path):
+    """纯标准库读 .xlsx 第一个 sheet，返回 list[dict]（表头小写做 key）。不引 openpyxl。"""
+    with zipfile.ZipFile(path) as z:
+        names = z.namelist()
+        shared = []
+        if "xl/sharedStrings.xml" in names:
+            root = ET.fromstring(z.read("xl/sharedStrings.xml"))
+            for si in root.findall(f"{_XL_NS}si"):
+                shared.append("".join(t.text or "" for t in si.iter(f"{_XL_NS}t")))
+        # 找第一个 worksheet
+        sheet = next((n for n in names if n.startswith("xl/worksheets/sheet") and n.endswith(".xml")), None)
+        if not sheet:
+            return []
+        root = ET.fromstring(z.read(sheet))
+        grid = []
+        for row in root.iter(f"{_XL_NS}row"):
+            cells = {}
+            for c in row.findall(f"{_XL_NS}c"):
+                ref = c.get("r", "")
+                col = "".join(ch for ch in ref if ch.isalpha())
+                t = c.get("t")
+                if t == "inlineStr":
+                    is_ = c.find(f"{_XL_NS}is")
+                    val = "".join(x.text or "" for x in is_.iter(f"{_XL_NS}t")) if is_ is not None else ""
+                else:
+                    v = c.find(f"{_XL_NS}v")
+                    val = "" if v is None else (shared[int(v.text)] if t == "s" else v.text)
+                cells[col] = (val or "").strip()
+            grid.append(cells)
+        if not grid:
+            return []
+        header_cells = grid[0]
+        cols = sorted(header_cells.keys())          # 列字母排序
+        header = {col: header_cells[col].strip().lower() for col in cols}
+        rows = []
+        for cells in grid[1:]:
+            if not any(cells.get(col) for col in cols):
+                continue                            # 跳过全空行
+            rows.append({header.get(col, col): cells.get(col, "") for col in cols})
+        return rows
+
+
+def _rows_to_pairs(rows):
+    """list[dict]（key 已小写）→ [(query_id 或 None, query)]，要求有 query 列。"""
+    pairs = []
+    for r in rows:
+        q = (r.get("query") or "").strip()
+        if not q:
+            continue
+        qid = (r.get("query_id") or r.get("queryid") or r.get("id") or "").strip() or None
+        pairs.append((qid, q))
+    return pairs
+
+
+def read_queries(path):
+    """返回 [(query_id 或 None, query)]。
+    .xlsx → 按表头 query_id/query 取；.csv/.tsv → 同（首行表头）；其它 → 每行一个 query（无 id）。"""
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".xlsx":
+        return _rows_to_pairs(_read_xlsx_rows(path))
+    if ext in (".csv", ".tsv"):
+        delim = "\t" if ext == ".tsv" else ","
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            rd = csv.DictReader(f, delimiter=delim)
+            return _rows_to_pairs([{(k or "").strip().lower(): (v or "").strip() for k, v in row.items()} for row in rd])
+    # 纯文本：每行一个 query，无 id
+    return [(None, l.strip()) for l in open(path, encoding="utf-8") if l.strip()]
 
 
 def _total_ram_gb():
@@ -50,9 +122,11 @@ def probe_capacity():
     return (CONCURRENCY_HARD_MAX if passed else 2), cpu, ram, passed
 
 
-def run_one(query, run_tag, port, log_dir, args, results, sem):
+def run_one(qid, query, run_tag, port, log_dir, args, results, sem):
     with sem:   # 信号量限流：同时只放 effective 个 run 进来
-        run_dir = os.path.join(config.RUNS_DIR, f"{run_tag}_{slugify(query)}")
+        # 产物目录：有 query_id 用 id 命名（可按 id 回溯），否则用 query 关键词切片
+        slug = slugify(qid) if qid else slugify(query)
+        run_dir = os.path.join(config.RUNS_DIR, f"{run_tag}_{slug}")
         workspace = os.path.join(run_dir, "workspace")
         tmp_dir = os.path.join(run_dir, "tmp")
         os.makedirs(workspace, exist_ok=True)
@@ -104,11 +178,15 @@ def main():
                     help="并发数。默认 2；只有机器探测通过(>=8核且>=16GB)才允许加到 4，硬上限 4。")
     args = ap.parse_args()
 
-    queries = list(args.queries)
+    pairs = [(None, q) for q in args.queries]      # 命令行位置参数：无 query_id
     if args.queries_file:
-        queries += [l.strip() for l in open(args.queries_file) if l.strip()]
-    if not queries:
+        pairs += read_queries(args.queries_file)    # .xlsx/.csv/.tsv 带 query_id；.txt 无
+    if not pairs:
         ap.error("至少给一个 query(位置参数或 --queries-file)")
+    # 并发各 query 必须互不相同（代理按 query 内容认领 session 文件）
+    qtexts = [q for _, q in pairs]
+    if len(set(qtexts)) != len(qtexts):
+        print("⚠ 检测到重复 query —— 并发下重复 query 无法区分 session，可能串台/认领失败，请去重。")
 
     # 并发数：请求值先夹到 [1, 硬上限]，再被机器探测的上限压一道（探测不过最多 2）
     allowed_max, cpu, ram, passed = probe_capacity()
@@ -121,7 +199,7 @@ def main():
     sem = threading.Semaphore(effective)
 
     ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    print(f"=== 并发采集 {len(queries)} 条 ===")
+    print(f"=== 并发采集 {len(pairs)} 条 ===")
 
     # 一次性清 /tmp 渲染残留(skill 已改用 $TMPDIR,这里只清历史遗留)
     for pat in ("/tmp/pg-*.png", "/tmp/vg-*.png", "/tmp/checklayout_*", "/tmp/checkedges_*"):
@@ -158,9 +236,9 @@ def main():
     try:
         sc_baseurl_set(f"http://127.0.0.1:{port}")
         threads = []
-        for i, q in enumerate(queries):
+        for i, (qid, q) in enumerate(pairs):
             run_tag = f"{ts}-r{i}"           # 全连字符,唯一,survive memory slug
-            t = threading.Thread(target=run_one, args=(q, run_tag, port, log_dir, args, results, sem))
+            t = threading.Thread(target=run_one, args=(qid, q, run_tag, port, log_dir, args, results, sem))
             t.start()
             threads.append(t)
             time.sleep(2)                    # 错开启动,避开同秒抢启动框

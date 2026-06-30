@@ -153,7 +153,11 @@ python3 collect_concurrent.py --queries-file queries.txt -j 4     # 提到 4（�
 # 也支持 TC_THINKING_HACK=1 / --model / --max-seconds / --no-html
 ```
 > **并发数 `--concurrency`/`-j`**:默认 **2**;只有机器**探测通过**(`>=8` 核且 `>=16GB`)才允许加到 **4**,硬上限 4。探测不过时即使传 `-j 4` 也会自动降到 2 并打印提示。给多少 query 都安全——信号量保证同时只跑 effective 个,不会一次性全开打爆机器。
-> ⚠ 并发的各 query **必须互不相同**(代理按 query 内容认领各自的 session 文件;相同 query 无法区分)。
+> **`--queries-file` 支持四种格式**(按后缀自动识别):
+> - `.xlsx` / `.csv` / `.tsv`:**首行表头**,需有 `query` 列,可选 `query_id` 列(纯标准库解析 xlsx,无需 openpyxl)。
+> - `.txt`(或其它):**每行一个 query**,无 id。
+> 有 `query_id` 时,该 run 的**产物目录用 query_id 命名**(`<时间戳>-r<i>_<query_id>/`),trajectory_sft.json 可按 id 回溯;无 id 则用 query 关键词切片。
+> ⚠ 并发的各 query **必须互不相同**(代理按 query 内容认领各自的 session 文件;相同 query 无法区分;重复会打印告警)。
 > 每条 run 各自独立 `workspace/` 和 `TMPDIR`,产物各落自己目录。
 
 ## 7. 配置(`config.py`)
