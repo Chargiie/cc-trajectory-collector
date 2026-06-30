@@ -145,13 +145,14 @@ python3 collect.py "你的 query"
 TC_THINKING_HACK=1 python3 collect.py "你的 query"
 ```
 
-**并发采集(单机,无 Docker)**:多个 query 同时跑,共享一个代理、按 session 分流。
+**并发采集(单机,无 Docker)**:多 query 共享一个代理、按 session 分流;**信号量限流**,同时只跑 `--concurrency` 个,其余排队。
 ```bash
-python3 collect_concurrent.py "query1" "query2" "query3"
-# 或从文件(每行一个 query):
-python3 collect_concurrent.py --queries-file queries.txt
+python3 collect_concurrent.py "query1" "query2" "query3"          # 默认并发 2
+python3 collect_concurrent.py --queries-file queries.txt          # 给多少都行，仍只 2 个同时跑
+python3 collect_concurrent.py --queries-file queries.txt -j 4     # 提到 4（需探测通过）
 # 也支持 TC_THINKING_HACK=1 / --model / --max-seconds / --no-html
 ```
+> **并发数 `--concurrency`/`-j`**:默认 **2**;只有机器**探测通过**(`>=8` 核且 `>=16GB`)才允许加到 **4**,硬上限 4。探测不过时即使传 `-j 4` 也会自动降到 2 并打印提示。给多少 query 都安全——信号量保证同时只跑 effective 个,不会一次性全开打爆机器。
 > ⚠ 并发的各 query **必须互不相同**(代理按 query 内容认领各自的 session 文件;相同 query 无法区分)。
 > 每条 run 各自独立 `workspace/` 和 `TMPDIR`,产物各落自己目录。
 
