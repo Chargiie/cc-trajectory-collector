@@ -23,10 +23,13 @@ const HACK_GUIDANCE = [
   "Reply MUST begin with exactly ONE <thinking>...</thinking> block containing ALL of your reasoning for this turn — ultra detailed: current state, evidence gathered, full plan, and the next action(s).",
   "Think once, upfront. After the closing </thinking>, do NOT write any further <thinking> blocks in the same reply.",
   "After the thinking block, respond normally as you otherwise would: your visible reply text to the user and/or native tool calls, whatever this turn needs. Do not suppress your normal user-facing response.",
-  "When the task is finished and no tool is needed, the reply is: the <thinking> block, then your complete final answer to the user.",
+  "If your reply states or implies a next action, you MUST emit the corresponding tool call(s) in the SAME reply. Never end a turn having only described what you intend to do next.",
+  "Do not end your turn while any part of the task remains unfinished, or while you have announced an action you have not yet executed. Resolve uncertainty by acting (calling tools), not by stopping early.",
+  "Only when the user's request is fully and verifiably complete do you give your final answer — that is the only point a turn may end without a tool call.",
+  "At the end of each reply you have exactly two choices: (a) continue working, OR (b) declare the task complete with a final summary and no mention of further steps. There is no third option. Never announce future work you will not perform in this same reply.",
   "Use the native tool-calling interface when a tool is needed; never fabricate tool results — wait for the next observation.",
 ].join('\n');
-const HACK_SUFFIX = "\nNow output your ultra detailed thinking block in <thinking>...</thinking>.";
+const HACK_SUFFIX = "\nNow output your ultra detailed thinking block in <thinking>...</thinking>.\nDo not end this turn with announced-but-unexecuted actions — either call the tool or declare the task complete.";
 
 function applyThinkingHack(reqBody) {
   // 返回(可能改写后的)body buffer;任何异常都退回原 body,绝不影响转发。

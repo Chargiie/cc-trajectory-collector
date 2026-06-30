@@ -16,7 +16,7 @@ _THINK_TAG = re.compile(r"<thinking(?:\s[^>]*)?>|</thinking>", re.I)
 
 # content-thinking hack 注入的脚手架(须与 proxy.js 保持一致),重建时从数据里剥除,
 # 避免 guidance/suffix 泄漏进最终训练样本的 system / user。
-_HACK_SUFFIX = "\nNow output your ultra detailed thinking block in <thinking>...</thinking>."
+_HACK_SUFFIX = "\nNow output your ultra detailed thinking block in <thinking>...</thinking>.\nDo not end this turn with announced-but-unexecuted actions — either call the tool or declare the task complete."
 _HACK_ANCHOR = "Reply MUST begin with exactly ONE <thinking>"
 
 
