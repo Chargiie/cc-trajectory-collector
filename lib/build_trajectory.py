@@ -83,8 +83,11 @@ def build(calls_path):
     first, last = main[0], complete[-1]
     fr = first['request_body']
     sysv = fr.get('system')
-    system_text = ('\n'.join(b.get('text', '') if isinstance(b, dict) else str(b) for b in sysv)
-                   if isinstance(sysv, list) else (sysv or ''))
+    _sys_blocks = ([(b.get('text', '') if isinstance(b, dict) else str(b)) for b in sysv]
+                   if isinstance(sysv, list) else [sysv or ''])
+    # 修2:剥掉 stepcode 当 system block#0 发的 HTTP 计费头(x-anthropic-billing-header,纯元数据噪声,非 system prompt)
+    _sys_blocks = [t for t in _sys_blocks if not t.lstrip().startswith('x-anthropic-billing-header:')]
+    system_text = '\n'.join(_sys_blocks)
     system_text = _strip_hack_system(system_text)  # 剥除注入的 hack guidance
     tools = fr.get('tools', [])
 
@@ -105,11 +108,27 @@ def build(calls_path):
                     if tid and tid not in result_map:
                         result_map[tid] = _clean(b)
 
+    # 修1:合并 messages 数组里混入的 role:system(stepcode 把 agent/skill 列表当 system 塞进对话,
+    # 排在首个 assistant 之前)→ 并进打头那条 system,避免最终样本出现 system→user→system 的非法序列
+    _inline_sys = []
+    for m in fr.get('messages', []):
+        if m.get('role') == 'assistant':
+            break
+        if m.get('role') == 'system':
+            c = m.get('content')
+            _inline_sys.append(c if isinstance(c, str)
+                               else '\n'.join(b.get('text', '') if isinstance(b, dict) else str(b)
+                                              for b in (c or [])))
+    if _inline_sys:
+        system_text = system_text.rstrip() + '\n\n' + '\n\n'.join(t for t in _inline_sys if t)
+
     # 起始 user 轮(原始 query + 注入上下文):取第一条主 loop 请求里、首个 assistant 之前的 user 消息
     messages = [{"role": "system", "content": system_text}]
     for m in fr.get('messages', []):
         if m.get('role') == 'assistant':
             break
+        if m.get('role') == 'system':
+            continue   # 已并进打头 system,不再作为独立消息
         messages.append({"role": m.get('role'), "content": _norm(m.get('content'))})
 
     # 按调用顺序逐响应拼接:每个完整主 loop 调用 = 一个 assistant 轮,随后补它的 tool_result
