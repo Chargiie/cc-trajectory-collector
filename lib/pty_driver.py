@@ -14,7 +14,7 @@ import config
 def _find_session_file(log_dir, query):
     """并发模式:共享代理按 x-claude-code-session-id 分文件;本 run 不知自己 sid,
     就按 query 内容在 log_dir 里认领——并发各 run query 不同,唯一匹配。返回路径或 None。"""
-    probe = query.strip()[:40]  # 用 query 前缀做指纹(够区分,且避免整串转义问题)
+    probe = query.strip()[:80]  # 用 query 前缀做指纹(够区分,且避免整串转义问题)
     for p in glob.glob(os.path.join(log_dir, '*.jsonl')):
         if os.path.basename(p) == '_no_session.jsonl':
             continue
@@ -27,13 +27,14 @@ def _find_session_file(log_dir, query):
 
 
 def _calls_state(calls_path):
-    """返回 (主loop调用数, 最后一条主loop的stop_reason)。容忍正在写入的半行。
-    注意:只数主 loop 调用(有 system + 工具多),后台/小辅助调用不计入,
-    否则它们会扰动"静默"判断。"""
+    """返回 (主loop调用数, 最后一条主loop的stop_reason, 该响应里最后一个tool_use名)。
+    容忍正在写入的半行。注意:只数主 loop 调用(有 system + 工具多),后台/小辅助调用不计入,
+    否则它们会扰动"静默"判断。last_tool 用于识别"卡在 AskUserQuestion 反问"。"""
     n_main = 0
     last_stop = None
+    last_tool = None
     if not os.path.exists(calls_path):
-        return 0, None
+        return 0, None, None
     try:
         for l in open(calls_path):
             l = l.strip()
@@ -49,9 +50,14 @@ def _calls_state(calls_path):
                 n_main += 1
                 ra = o.get('response_reassembled') or {}
                 last_stop = ra.get('stop_reason')
+                lt = None
+                for b in (ra.get('content') or []):
+                    if isinstance(b, dict) and b.get('type') == 'tool_use':
+                        lt = b.get('name')
+                last_tool = lt
     except Exception:
         pass
-    return n_main, last_stop
+    return n_main, last_stop, last_tool
 
 
 def run_session(query, cwd, calls_path, port=None, model=None, use_bare=False,
@@ -63,6 +69,10 @@ def run_session(query, cwd, calls_path, port=None, model=None, use_bare=False,
     max_seconds = max_seconds if max_seconds is not None else config.MAX_SECONDS
     ready_delay = ready_delay if ready_delay is not None else config.READY_DELAY
     dismiss_delay = dismiss_delay if dismiss_delay is not None else config.DISMISS_DELAY
+    # headless 批量兜底阈值:卡在 AskUserQuestion 反问 / SSE 截断 多久后判定放行
+    ask_quiet = getattr(config, "ASK_QUIET", 90)
+    trunc_quiet = getattr(config, "TRUNC_QUIET", 120)
+    tool_hang_quiet = getattr(config, "TOOL_HANG_QUIET", 600)
 
     env = dict(os.environ)
     env["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{port}"
@@ -107,7 +117,7 @@ def run_session(query, cwd, calls_path, port=None, model=None, use_bare=False,
     sent = False
     sent_at = None
     resolved = None if log_dir else calls_path   # log_dir 模式:待认领的 session 文件
-    last_n, _ = _calls_state(resolved) if resolved else (0, None)
+    last_n, _, _ = _calls_state(resolved) if resolved else (0, None, None)
     last_growth = time.time()
     reason = "max_seconds"
 
@@ -147,7 +157,7 @@ def run_session(query, cwd, calls_path, port=None, model=None, use_bare=False,
             # log_dir 模式:发完 query 后,按 query 认领自己的 session 文件
             if resolved is None and log_dir:
                 resolved = _find_session_file(log_dir, query)
-            n, last_stop = _calls_state(resolved) if resolved else (0, None)
+            n, last_stop, last_tool = _calls_state(resolved) if resolved else (0, None, None)
             if n > last_n:
                 last_n = n
                 last_growth = now
@@ -157,6 +167,21 @@ def run_session(query, cwd, calls_path, port=None, model=None, use_bare=False,
             # 只靠 end_turn 自然收尾(max_seconds<=0 时不主动截断)。
             if last_stop == 'end_turn' and idle > quiet_seconds:
                 reason = "completed"
+                break
+            # 兜底1:headless 批量里 AskUserQuestion 反问无人应答 → 永久挂起;
+            # 末轮停在该工具且静默超 ask_quiet 即判"卡在反问",放行让 worker 跑下一条。
+            if last_stop == 'tool_use' and last_tool == 'AskUserQuestion' and idle > ask_quiet:
+                reason = "blocked_on_ask"
+                break
+            # 兜底2:SSE 截断(响应无 message_stop → stop_reason=None),静默超 trunc_quiet 即判截断放行。
+            if n > 0 and last_stop is None and idle > trunc_quiet:
+                reason = "sse_truncated"
+                break
+            # 兜底3:任意工具卡死(stop=tool_use 但静默远超正常渲染耗时)→ 判 tool hang 放行。
+            # 阈值取宽松(默认600s):正常 Chromium 渲染 1-2 分钟内必有新调用,不会误伤;
+            # AskUserQuestion 已在兜底1(90s)先行命中,到这里只剩 Bash/find 等真卡死的工具。
+            if last_stop == 'tool_use' and idle > tool_hang_quiet:
+                reason = "tool_hang"
                 break
 
         # max_seconds<=0 表示无限,不主动截断;>0 时才设硬上限
