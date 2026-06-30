@@ -1,6 +1,6 @@
-# cc-trajectory-collector  ·  `feat/content-thinking-hack`
+# cc-trajectory-collector
 
-> 来源:基于 fangfeiteng 的 trajectory-collector。本分支在其上新增 **content-thinking hack(拿原始 CoT)** 与 **三项防泄漏修复**,并修了 stepcode 启动框占住 stdin 的问题(见 `lib/pty_driver.py`)。
+> 来源:基于 fangfeiteng 的 trajectory-collector。本版在其上新增 **content-thinking hack(拿原始 CoT)** 与 **三项防泄漏修复**,并修了 stepcode 启动框占住 stdin 的问题(见 `lib/pty_driver.py`)。
 
 把**一个 query** 用 `sc claude`(Claude Code)真实跑一遍,自动产出一条 **SFT 训练格式**的 agent 轨迹——含完整 system prompt、工具 schema、thinking、多轮工具调用与结果——并附一份聊天式 HTML 可视化。
 
@@ -15,7 +15,7 @@
 
 这两样是客户端每次请求现拼的,不落盘。本项目在 `base_url` 外包一层**本地日志反向代理**,把请求/响应原样 tee 下来补齐;并坚持**交互式(非 `-p`)**启动,保证上游下发 thinking(`-p` headless 抓到的 thinking 是空的)。
 
-> ⚠ **thinking 的性质**:默认拿到的是 Claude 原生 extended thinking,即 **Anthropic 压缩过的「摘要」**,不是逐 token 原始推理(实测 `output_tokens` 远大于可见 thinking)。要**原始完整 CoT**,开本分支新增的 `TC_THINKING_HACK`(见 §4)。
+> ⚠ **thinking 的性质**:默认拿到的是 Claude 原生 extended thinking,即 **Anthropic 压缩过的「摘要」**,不是逐 token 原始推理(实测 `output_tokens` 远大于可见 thinking)。要**原始完整 CoT**,开本版新增的 `TC_THINKING_HACK`(见 §4)。
 
 ## 2. 工作原理
 
@@ -46,7 +46,7 @@ trajectory_sft.json  +  trajectory.html
 
 `reasoning_content` 来源:默认=原生 thinking 块(摘要);hack 模式=正文 `<thinking>` 拆出(原始 CoT)。
 
-## 4. thinking 两种模式(本分支重点)
+## 4. thinking 两种模式(本版重点)
 
 靠 `TC_THINKING_HACK` 切换,**同一 run 只能其一**:
 
@@ -127,7 +127,7 @@ sc system baseurl https://models-proxy.stepfun-inc.com
 
 **⑥ clone**
 ```bash
-git clone -b feat/single-machine-concurrency https://github.com/Chargiie/cc-trajectory-collector.git
+git clone https://github.com/Chargiie/cc-trajectory-collector.git
 cd cc-trajectory-collector
 node -v && python3 -V && sc system baseurl     # 一键自检
 ```
@@ -169,9 +169,9 @@ python3 collect_concurrent.py --queries-file queries.txt
 | 单 run 上限 | `TC_MAX_SECONDS` | 0 | 硬超时秒;**0=无限**(只靠 end_turn 收尾) |
 | **产物目录** | `TC_RUNS_DIR` | `~/Desktop/cc-trajectory-runs` | **必须在 git 仓库外**(见 §8) |
 
-## 8. 防上下文污染 & 防泄漏(本分支重点)
+## 8. 防上下文污染 & 防泄漏(本版重点)
 
-数据要"干净、可复现、贴近部署",必须消除以下污染。本分支修了三类泄漏:
+数据要"干净、可复现、贴近部署",必须消除以下污染。本版修了三类泄漏:
 
 1. **git 提交记录泄漏(最隐蔽)**:Claude Code 的 system prompt 有 `gitStatus` 段(含**近期 commit 信息**),只要 cwd 在 git 仓库内就会注入。旧版 workspace 在 `项目/runs/` 内 → 每条轨迹的 system 都混进了**本仓库的开发提交**(且随提交变化、不可复现)。
    - **修法**:`RUNS_DIR` 默认移到仓库外(`~/Desktop/cc-trajectory-runs`)→ cwd 不在仓库 → 无 gitStatus。**附带**:含 token 的 `calls.jsonl` 也不在仓库内,杜绝误提交。
