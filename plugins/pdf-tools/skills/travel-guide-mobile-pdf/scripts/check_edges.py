@@ -14,7 +14,7 @@
     python3 check_edges.py out.pdf                                          # 默认阈值
     python3 check_edges.py out.pdf --expect-pages 8                         # 8 页设计
     python3 check_edges.py out.pdf --max-bottom 12 --max-center-delta 8 --min-edge 10
-    python3 check_edges.py '/tmp/pg-*.png'                                   # 直接喂已渲染 PNG
+    python3 check_edges.py '$TMPDIR/pg-*.png'                                   # 直接喂已渲染 PNG
 """
 import sys, os, glob, argparse, tempfile, subprocess
 import numpy as np
@@ -80,7 +80,7 @@ def content_edge_distance_px(png_path, side='left', tol=8, col_match=0.985):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("src", help="PDF 路径，或 PNG 路径/glob（如 '/tmp/pg-*.png'）")
+    ap.add_argument("src", help="PDF 路径，或 PNG 路径/glob（如 '$TMPDIR/pg-*.png'）")
     ap.add_argument("--dpi", type=int, default=96)
     ap.add_argument("--expect-pages", type=int, default=None,
                    help="设计页数（.page 段数）。物理页数 != 此值 = FAIL")

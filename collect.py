@@ -104,6 +104,9 @@ def main():
     proxy_env["PROXY_PORT"] = str(port)
     proxy_env["UPSTREAM_URL"] = config.UPSTREAM_URL
     proxy_env["LOG_FILE"] = calls_path
+    if config.THINKING_HACK:
+        proxy_env["THINKING_HACK"] = "1"
+        print("[proxy] content-thinking hack 已启用(原始 CoT 模式)")
     proxy_out = open(os.path.join(run_dir, "proxy.out"), "w")
     proxy = subprocess.Popen(["node", config.PROXY_JS], env=proxy_env,
                              stdout=proxy_out, stderr=subprocess.STDOUT)

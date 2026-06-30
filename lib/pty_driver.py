@@ -5,10 +5,25 @@
 完成检测:监控 calls.jsonl,末次调用后静默 QUIET_SECONDS 且已出现主 loop end_turn 即判定结束;
 max_seconds>0 时才设硬上限,默认无限(0)不主动截断。绝不使用 --continue/--resume(避免跨 run 上下文污染)。
 """
-import os, sys, pty, time, select, signal, json, fcntl, termios, struct
+import os, sys, pty, time, select, signal, json, fcntl, termios, struct, glob
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
+
+
+def _find_session_file(log_dir, query):
+    """并发模式:共享代理按 x-claude-code-session-id 分文件;本 run 不知自己 sid,
+    就按 query 内容在 log_dir 里认领——并发各 run query 不同,唯一匹配。返回路径或 None。"""
+    probe = query.strip()[:40]  # 用 query 前缀做指纹(够区分,且避免整串转义问题)
+    for p in glob.glob(os.path.join(log_dir, '*.jsonl')):
+        if os.path.basename(p) == '_no_session.jsonl':
+            continue
+        try:
+            if probe in open(p, encoding='utf-8', errors='ignore').read(200000):
+                return p
+        except OSError:
+            continue
+    return None
 
 
 def _calls_state(calls_path):
@@ -41,7 +56,7 @@ def _calls_state(calls_path):
 
 def run_session(query, cwd, calls_path, port=None, model=None, use_bare=False,
                 quiet_seconds=None, max_seconds=None, ready_delay=None, log_cb=None,
-                tmpdir=None, dismiss_delay=None):
+                tmpdir=None, dismiss_delay=None, log_dir=None):
     port = port or config.PROXY_PORT
     model = model or config.MODEL
     quiet_seconds = quiet_seconds if quiet_seconds is not None else config.QUIET_SECONDS
@@ -91,7 +106,8 @@ def run_session(query, cwd, calls_path, port=None, model=None, use_bare=False,
     dismissed = False
     sent = False
     sent_at = None
-    last_n, _ = _calls_state(calls_path)
+    resolved = None if log_dir else calls_path   # log_dir 模式:待认领的 session 文件
+    last_n, _ = _calls_state(resolved) if resolved else (0, None)
     last_growth = time.time()
     reason = "max_seconds"
 
@@ -128,7 +144,10 @@ def run_session(query, cwd, calls_path, port=None, model=None, use_bare=False,
             last_growth = now  # 重置,等首个调用
 
         if sent:
-            n, last_stop = _calls_state(calls_path)
+            # log_dir 模式:发完 query 后,按 query 认领自己的 session 文件
+            if resolved is None and log_dir:
+                resolved = _find_session_file(log_dir, query)
+            n, last_stop = _calls_state(resolved) if resolved else (0, None)
             if n > last_n:
                 last_n = n
                 last_growth = now
@@ -179,7 +198,8 @@ def run_session(query, cwd, calls_path, port=None, model=None, use_bare=False,
     except OSError:
         pass
 
-    return {"reason": reason, "elapsed": round(time.time() - start, 1), "num_calls": last_n}
+    return {"reason": reason, "elapsed": round(time.time() - start, 1),
+            "num_calls": last_n, "session_file": resolved}
 
 
 if __name__ == '__main__':
