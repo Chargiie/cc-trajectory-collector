@@ -60,8 +60,10 @@ HTML → Chromium(Playwright) → PDF。强视觉攻略用 HTML+Chrome 最顺手
    - **密集**（路线时间轴 / 长清单 / 对照表）：紧凑字号行距（但守可读下限）、小间距、必要时分栏。
    - **同一页内容多就上密集档、少就上稀疏档——参数跟着内容量走，别一套参数套全程。**
 6. **写 HTML**：每段一个 `<section class="page">`（默认）。需要硬卡（满版封面 / 独立可分享单卡）才改用 `<section class="screen">`。renderer 靠类名做护栏，**务必用 `.page` 或 `.screen` 这两个类名之一**，别用别的。
-7. **渲染 PDF**：`node scripts/render_mobile.cjs source.html out.pdf`（需 `NODE_PATH` 指向装了 playwright 的 node_modules）。读它输出的**逐页报告**。
-8. **自检 → 重修闭环（不过不交付）**：跑 `python3 scripts/check_edges.py out.pdf --expect-pages <设计页数>` 测页边距 + 居中；再 `pdftoppm -r 96 -png out.pdf $TMPDIR/pg` **逐页 Read 看图**核对脚本测不到的（孤立标题、破图、卡片切断、贴边）。**任一不过 → 写清哪页哪元素什么问题 → 改 HTML → 重渲染 → 重跑。循环到全过。**
+7. **渲染 PDF**：`node scripts/render_mobile.cjs <源>.html <产物>.pdf`（需 `NODE_PATH` 指向装了 playwright 的 node_modules）。读它输出的**逐页报告**。
+   - **产物命名（重要）**：文件名用 **query 关键词**，**禁用** `out.pdf` / `guide.pdf` / `攻略.pdf` 这类通用名（易重名、难分辨）。例：query「南京老门东半天拍照」→ `南京老门东citywalk.pdf`；HTML 中间文件同名（`南京老门东citywalk.html`）。
+   - **批量跑、且有 `query_id` 时**：**优先用 query_id 命名**（如 `q042.pdf`，或 `q042_南京老门东.pdf` 兼顾可读+唯一），保证不重名、可回溯到 query。
+8. **自检 → 重修闭环（不过不交付）**：跑 `python3 scripts/check_edges.py <产物>.pdf --expect-pages <设计页数>` 测页边距 + 居中；再 `pdftoppm -r 96 -png <产物>.pdf $TMPDIR/pg` **逐页 Read 看图**核对脚本测不到的（孤立标题、破图、卡片切断、贴边）。**任一不过 → 写清哪页哪元素什么问题 → 改 HTML → 重渲染 → 重跑。循环到全过。**
 9. **交付（必须附自检证据，否则不算完成）**：**逐页列证据表**——每页：`check_edges` 留白% / 居中 / 贴边 / 有无孤立标题/破图/切断。**没有这张表 = 没做自检 = 不准交付**。
 
 ## 机械契约（渲染正确性，非样式偏好）
