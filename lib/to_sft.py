@@ -35,7 +35,7 @@ def to_sft(traj, session_id="trajectory-collector", agent="claude-code"):
                         "role": "tool",
                         "tool_call_id": tcid,
                         "name": id2name.get(tcid, ""),
-                        "content": c if isinstance(c, str) else json.dumps(c, ensure_ascii=False),
+                        "content": c if isinstance(c, (str, list)) else "",
                         "is_error": bool(tr.get('is_error', False)),
                     })
             else:
