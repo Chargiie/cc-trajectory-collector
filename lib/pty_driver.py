@@ -168,8 +168,11 @@ def run_session(query, cwd, calls_path, port=None, model=None, use_bare=False,
             if last_stop == 'end_turn' and idle > quiet_seconds:
                 reason = "completed"
                 break
-            # 兜底1:headless 批量里 AskUserQuestion 反问无人应答 → 永久挂起;
-            # 末轮停在该工具且静默超 ask_quiet 即判"卡在反问",放行让 worker 跑下一条。
+            # AskUserQuestion 反问：headless 无人应答会永久挂起。
+            # 预防靠「启动时给 query 拼前置自主指令」(agent 自己假设、不反问)——见 README/命令卡。
+            # 这里只作**快速兜底**:真反问了就静默 ask_quiet(默认60s)后放行,不空耗。
+            # (曾试 feiteng 的「连发 Enter 自动选默认项」,但 CC v2.1.196 的 AskUserQuestion TUI 不认盲 Enter,
+            #  6 Enter 提交不了、只会白耗 → 去掉,改回快速放行。)
             if last_stop == 'tool_use' and last_tool == 'AskUserQuestion' and idle > ask_quiet:
                 reason = "blocked_on_ask"
                 break
@@ -179,7 +182,7 @@ def run_session(query, cwd, calls_path, port=None, model=None, use_bare=False,
                 break
             # 兜底3:任意工具卡死(stop=tool_use 但静默远超正常渲染耗时)→ 判 tool hang 放行。
             # 阈值取宽松(默认600s):正常 Chromium 渲染 1-2 分钟内必有新调用,不会误伤;
-            # AskUserQuestion 已在兜底1(90s)先行命中,到这里只剩 Bash/find 等真卡死的工具。
+            # AskUserQuestion 已在上面(ask_quiet 60s)先行自动应答,到这里只剩 Bash/find 等真卡死的工具。
             if last_stop == 'tool_use' and idle > tool_hang_quiet:
                 reason = "tool_hang"
                 break

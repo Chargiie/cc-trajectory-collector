@@ -6,7 +6,7 @@ Claude Code 上下文压缩,history 被摘要重置,跨不过去)。改为按调
 调用的 response 作为一个 assistant 轮,再用各请求里出现过的 tool_result 按 id 回填。
 这样无论压缩多少次都能还原完整动作序列。system/tools 只有代理能拿到(本地 transcript 缺)。
 """
-import json, sys, os, re
+import json, sys, os, re, base64
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
@@ -142,6 +142,9 @@ def build(calls_path):
                     messages.append({"role": "user", "content": [result_map[tid]]})
 
     compactions = _count_compactions(main)
+    # 多模态图片外置:base64 内联 → 落盘本地文件 + 换成 {"type":"image_url","image_url":<绝对路径>}
+    # 目的:轨迹里不再出现 base64(体积暴涨、不便查看),并对齐 host_agent 的 image_url 结构。
+    _externalize_images(messages, os.path.join(os.path.dirname(os.path.abspath(calls_path)), 'sft_images'))
     return {
         "meta": {
             "model": fr.get('model'),
@@ -167,6 +170,47 @@ def _count_compactions(main):
         if lens[i] + 4 < lens[i - 1]:   # 明显回落
             drops += 1
     return drops
+
+
+_IMG_EXT = {'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif'}
+
+
+def _externalize_images(messages, img_dir):
+    """base64 图块 -> 落盘 + 原地替换成 {"type":"image_url","image_url":<绝对路径>}。
+    图片可能在 message.content,也可能嵌在 tool_result.content 里,需递归下钻。"""
+    state = {'n': 0, 'made': False}
+    def conv(b, mi):
+        if not isinstance(b, dict):
+            return
+        if b.get('type') == 'tool_result' and isinstance(b.get('content'), list):
+            for x in b['content']:
+                conv(x, mi)          # 递归下钻 tool_result
+            return
+        if not (b.get('type') == 'image' and isinstance(b.get('source'), dict)
+                and b['source'].get('type') == 'base64'):
+            return
+        data = b['source'].get('data')
+        if not data:
+            return
+        if not state['made']:
+            os.makedirs(img_dir, exist_ok=True)
+            state['made'] = True
+        path = os.path.join(img_dir, f"msg{mi:03d}_{state['n']:02d}{_IMG_EXT.get(b['source'].get('media_type'), '.bin')}")
+        try:
+            with open(path, 'wb') as f:
+                f.write(base64.b64decode(data))
+        except Exception:
+            return
+        b.clear()
+        b['type'] = 'image_url'
+        b['image_url'] = path
+        state['n'] += 1
+    for mi, m in enumerate(messages):
+        c = m.get('content')
+        if isinstance(c, list):
+            for b in c:
+                conv(b, mi)
+    return state['n']
 
 
 def _norm(content):

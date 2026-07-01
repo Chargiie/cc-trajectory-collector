@@ -139,6 +139,10 @@ def run_one(qid, query, run_tag, port, log_dir, args, results, sem):
         sf = res.get("session_file")
         calls_path = os.path.join(run_dir, "calls.jsonl")
         info = {"run_dir": run_dir, "res": res, "meta": None}
+        # run_meta.json：记 reason/query_id/耗时，供批量按文件筛（如挑出 blocked_on_ask / max_seconds 单独处理）
+        json.dump({"query_id": qid, "query": query, "reason": res.get("reason"),
+                   "elapsed": res.get("elapsed"), "num_calls": res.get("num_calls")},
+                  open(os.path.join(run_dir, "run_meta.json"), "w"), ensure_ascii=False, indent=2)
         if not (sf and os.path.exists(sf)):
             print(f"[{run_tag}] ✗ 未认领到 session 文件 ({res})")
             results[run_tag] = info
@@ -146,12 +150,14 @@ def run_one(qid, query, run_tag, port, log_dir, args, results, sem):
             return
         shutil.copy(sf, calls_path)
         try:
+            # 产物文件名带 id 前缀(query_id 优先，无则用唯一 run_tag)，便于抽出目录后区分
+            sid = slugify(qid) if qid else run_tag
             traj = build_trajectory.build(calls_path)
-            json.dump(traj, open(os.path.join(run_dir, "trajectory.json"), "w"), ensure_ascii=False, indent=2)
+            json.dump(traj, open(os.path.join(run_dir, f"{sid}_trajectory.json"), "w"), ensure_ascii=False, indent=2)
             sft = to_sft.to_sft(traj, session_id=os.path.basename(run_dir))
-            json.dump([sft], open(os.path.join(run_dir, "trajectory_sft.json"), "w"), ensure_ascii=False, indent=2)
+            json.dump([sft], open(os.path.join(run_dir, f"{sid}_trajectory_sft.json"), "w"), ensure_ascii=False, indent=2)
             if not args.no_html:
-                open(os.path.join(run_dir, "trajectory.html"), "w").write(render_html.render(traj))
+                open(os.path.join(run_dir, f"{sid}_trajectory.html"), "w").write(render_html.render(traj))
             info["meta"] = traj["meta"]
             print(f"[{run_tag}] ✓ {res['reason']} | 主loop {traj['meta']['num_main_calls']} | {res['elapsed']}s")
         except Exception as e:

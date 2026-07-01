@@ -31,6 +31,10 @@ MAX_SECONDS = int(os.environ.get("TC_MAX_SECONDS", "0"))        # 单 run 硬上
 DISMISS_DELAY = float(os.environ.get("TC_DISMISS_DELAY", "3"))  # 启动后多久发一个回车,清掉 stepcode 的"有新版本"等启动交互选择框(否则它吃掉 stdin,query 进不去输入框)
 READY_DELAY = float(os.environ.get("TC_READY_DELAY", "5"))      # 清完启动框后再等多久(界面就绪)才发 query
 
+# headless 批量遇 AskUserQuestion 反问：预防靠「启动时给 query 拼前置自主指令」(agent 自己假设不反问)；
+# 真反问了就静默此秒数后快速放行(blocked_on_ask)，不空耗。
+ASK_QUIET = int(os.environ.get("TC_ASK_QUIET", "60"))
+
 # 主 loop 调用判定(过滤后台/404/424/小辅助)
 MAIN_MIN_TOOLS = 10
 
