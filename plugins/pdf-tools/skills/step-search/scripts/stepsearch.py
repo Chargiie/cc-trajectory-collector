@@ -36,11 +36,30 @@ ENV_BASE_URL = "STEPFUN_SEARCH_BASE_URL"
 # Configuration Loading
 # ============================================================
 
+def _resolve_api_key() -> str:
+    """key 解析顺序：env STEPFUN_API_KEY → 同目录 key.txt → ~/.stepfun/skills/step-search/key.txt。
+    对齐 amap mcp_call.py 的多源解析，避免非交互 shell / cron / 别的机器没 export env 时静默失败。"""
+    k = (os.getenv(ENV_API_KEY) or "").strip()
+    if k:
+        return k
+    for p in (os.path.join(os.path.dirname(os.path.abspath(__file__)), "key.txt"),
+              os.path.expanduser("~/.stepfun/skills/step-search/key.txt")):
+        try:
+            with open(p) as f:
+                k = f.read().strip()
+            if k:
+                return k
+        except OSError:
+            pass
+    return ""
+
+
 def load_config() -> dict[str, Any]:
-    """Load configuration from environment variables only."""
-    api_key = os.getenv(ENV_API_KEY)
+    """Load configuration. key: env STEPFUN_API_KEY → key.txt → ~/.stepfun/skills/step-search/key.txt。"""
+    api_key = _resolve_api_key()
     if not api_key:
-        raise RuntimeError("System configuration incomplete - missing STEPFUN_API_KEY.")
+        raise RuntimeError("System configuration incomplete - missing STEPFUN_API_KEY "
+                           "(设 env，或放 scripts/key.txt / ~/.stepfun/skills/step-search/key.txt)。")
 
     return {
         "base_url": os.getenv(ENV_BASE_URL, DEFAULT_BASE_URL),

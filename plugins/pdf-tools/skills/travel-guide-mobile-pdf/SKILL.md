@@ -47,8 +47,8 @@ HTML → Chromium(Playwright) → PDF。强视觉攻略用 HTML+Chrome 最顺手
 1. **需求拆解**：人数 / 天数 / 出发地 / 预算 / 节奏 / 必去点 / 硬性要求（如「两套路线」「机酒价」）。
 2. **信息核查**：分工——**「在哪、怎么走、天气」问 amap，「多少钱、好不好」问 step-search**。
    - **位置类（amap）**：`maps_text_search` 验真实店名 + 地址（防编造）→ `maps_search_detail`（用 POI `id`）取坐标 / 评分 / 营业时间 / 人均。
-   - **价格 / 订房 / 口碑（step-search）**：amap 这块弱，走 **step-search skill**（`python3 <step-search skill 目录>/scripts/stepsearch.py "query"`，需 env `STEPFUN_API_KEY`），**禁编造**；无 live 价标「估算 + 时间」。
-   - 配图同理——只用**验证过能打开**的 URL（见机械契约「图片真实可达」）。
+   - **价格 / 口碑 / 贴士（step-search，宁可多查）**：amap 缺的动态信息全走 **step-search**（`python3 <step-search 目录>/scripts/stepsearch.py "query"`；key 走 env `STEPFUN_API_KEY` 或 `~/.stepfun/skills/step-search/key.txt`，两者其一即可）。**每个主要点位 / 每天行程至少查一轮**，覆盖：门票价 / 最新营业时间 / 必吃与人均 / 预约与订房 / 避坑注意 / 季节与实时开放状态 / 交通贴士。**调用宁多勿少**——攻略里每一处「多少钱、好不好、要不要预约、几点开」都应有 step-search 依据，**禁编造**；无 live 价标「估算 + 时间」。
+   - 配图同理——**下载真实图到本地再用相对路径引用**（见机械契约「图片默认下载到本地」），别 hot-link 远程 URL（CORS 会静默破图）。
 3. **排点 / 通勤 / 天气（amap）**：
    - 相邻点 `maps_direction_walking`（citywalk 必备）、跨区 `maps_direction_transit_integrated` / `maps_direction_driving` 出真实「距离 + 时长」；`maps_distance` 批量测距判断「这天塞不塞得下」、给点位排序。**写进攻略的通勤数字必须来自这些调用。**
    - `maps_weather` 查目标城市预报 → 攻略开头给室内外 / 带伞 / 穿衣建议，必要时据此调路线。
@@ -81,12 +81,10 @@ HTML → Chromium(Playwright) → PDF。强视觉攻略用 HTML+Chrome 最顺手
 
 **内容真实**
 - **链接必须真可点**：地图 / 订房 / 参考用真实 `<a href>`（渲染成 PDF `/Link`），**禁假链接 div**。
-- **图片真实可达**：配图只用**验证过能打开**的 URL，别凭记忆编文件名（实测：编造的 Wikimedia 文件名全 404 留白）。Wikimedia 走 Commons API 搜真实文件名 → `imageinfo` 取 `thumburl`；任意图床嵌入前 `curl -sI <url>` 确认 200。**宁可少图 / 用内联 SVG，不留 404 空块**。
-- **图片降级方案（图源全失败时）**：如果 Wikimedia 403/400、Unsplash 404、所有可用图源均不可达，**严禁使用 picsum.photos / placeholder.com 等占位图服务**（随机图片和目的地无关，视觉效果比无图更差）。降级顺序：
-  1. **减少图片数量**：只保留 1–2 张 hero 图，其余页不放图，用文字 + 排版撑视觉。
-  2. **CSS 纯视觉替代**：用 `linear-gradient` / `radial-gradient` 做色块装饰、用 CSS pattern（条纹/圆点/波浪）做背景纹理、用 emoji / 内联 SVG 图标代替照片。
-  3. **绝不留空白图框**：如果 `<img>` 404 会导致空白矩形，必须删掉该 `<img>` 或换成 CSS 方案。
-- **`<img>` 别乱加 `crossorigin="anonymous"`**（实测踩坑）：除非要 canvas 读像素，**一律不要加**。它会把图片改成 CORS 请求，而很多图床（amap `aos-comment.amap.com` / `store.is.autonavi.com`、部分 Wikimedia 镜像）**不返回 `Access-Control-Allow-Origin` 头 → CORS 失败 → 静默破图**。**`curl -sI` 仍是 200（CORS 是浏览器层，curl 查不到）**——所以「curl 200」是必要不充分，**图片是否真显示最终以渲染后逐页看图为准**。
+- **图片默认下载到本地再引用（首选策略，根治 CORS）**：找到真实图 URL 后，**先 `curl`/`wget` 下载到 `workspace/img/`，HTML 用相对路径 `img/xxx.jpg` 引用**——渲染时是本地文件、不发跨源请求，**CORS 从根上不存在，实拍照片稳定显示**。这是默认做法，**不是兜底**。**别直接 hot-link 远程 URL**（即使 `curl` 200 也可能被 CORS 静默拦成破图，见下）。
+- **找真实图源（只用 amap POI 图 + stepsearch，禁用 Wikimedia）**：**⛔ 不要用 Wikimedia / Commons（不可用，别浪费调用）**。按序：① **amap POI 实拍（首选，尤其餐厅/店铺/景点）**——`maps_text_search`/`maps_search_detail` 返回的 `photo` 字段（`store.is.autonavi.com/showpic/...`）是该店/该景点的真实照片，最贴题；② **stepsearch 找图**——搜「<地点> 实拍 / 门脸 / 风景」，从结果里取候选图片 URL。两条都下载前 `curl -sI <url>` 确认 200 且是图片类型，再存到 `workspace/img/`；**别凭记忆编 URL**。两者都拿不到 → 走降级方案（CSS，别硬凑）。
+- **CORS 陷阱（为什么要下载而非 hot-link）**：`curl -sI` 200 是**必要不充分**——很多图床（amap `aos-comment.amap.com` / `store.is.autonavi.com` 等）**不返回 `Access-Control-Allow-Origin` 头**，Chromium 渲染 hot-link 的远程图时会被 CORS **静默拦成破图**（`curl` 查不到，CORS 是浏览器层）。**下载到本地引用就绕开整个问题**——这正是默认下载的原因。另：`<img>` 除非要 canvas 读像素，**一律别加 `crossorigin="anonymous"`**（会把本可加载的图强制转成 CORS 请求）。图片是否真显示，最终以渲染后逐页看图为准。
+- **降级方案（真的一张可用真图都找不到时才走这步，不是嫌下载麻烦的逃生门）**：**严禁 picsum.photos / placeholder.com 占位图**（随机图与目的地无关，比无图更差）。顺序：① 减到 1–2 张 hero **真图**（同样下载到本地），其余页用文字 + 排版撑视觉；② 仍无图才用 CSS `linear-gradient`/pattern/emoji/内联 SVG 做视觉替代；③ 绝不留空白图框（`<img>` 会 404 就删掉或换 CSS）。**⚠️ CSS 插画风是最后手段——默认应尽力下载真实照片，实拍产物质量显著高于全插画（实测同一 query，下载实拍 vs 全 CSS 插画，观感差一档）。**
 - **唤端链接用 web URI**（PDF 链接点击最稳）：地图 / 导航 / 订房用 **`https://uri.amap.com/...`** web URI；**别用** `amapuri://...` 唤端 scheme——PDF 阅读器未必识别，点不动还以为是死链。
   - 单点标注：`https://uri.amap.com/marker?position=<lng>,<lat>&name=<名称>&coordinate=gaode&src=guide`
   - 导航到某点：`https://uri.amap.com/navigation?to=<lng>,<lat>,<名称>&mode=walk&coordinate=gaode&src=guide`（`mode` 取 `walk`/`car`/`bus`）
@@ -101,7 +99,7 @@ HTML → Chromium(Playwright) → PDF。强视觉攻略用 HTML+Chrome 最顺手
 ## 地图数据（amap MCP）
 真实地点 / 坐标 / 路线 / 通勤 / 天气走 **amap MCP skill**（`mcp__amap__maps_*` 工具）。编排纪律：
 - **坐标先行**：要算路线 / 测距前先拿 `经度,纬度`。规范**地址** → `maps_geo`；**POI / 店名 / 景点** → `maps_text_search` 拿 `id`（不返回坐标）→ `maps_search_detail` 取 `location`。**别手填猜的坐标**。
-- **分工**：位置 / 路线 / 天气问 amap；价格 / 订房 / 口碑问 **step-search**（`scripts/stepsearch.py`，需 `STEPFUN_API_KEY`）。
+- **分工**：位置 / 路线 / 天气问 amap；价格 / 订房 / 口碑 / 贴士问 **step-search**（`scripts/stepsearch.py`，key 走 env `STEPFUN_API_KEY` 或 `~/.stepfun/skills/step-search/key.txt`）——**宁可多查**，见工作流「信息核查」。
 - **失败兜底**：调用报错（如 `ENGINE_RESPONSE_DATA_ERROR`）→ POI 改 `text_search`、补全必填参数重试；仍不行 step-search 兜底并标「估」，**不要编造坐标 / 距离**。
 - **链接**：用高德 web URI（见机械契约「唤端链接用 web URI」），不用 `amapuri://` 唤端 scheme。
 - **未注册兜底**：运行环境没把 amap MCP 工具暴露给模型时，走 amap skill 的同名兜底脚本——`python3 <amap-mcp skill 目录>/scripts/mcp_call.py <工具名> '<json 参数>'`（key 解析：`AMAP_MCP_KEY` 环境变量 → `scripts/key.txt`）。
@@ -144,7 +142,7 @@ python3 scripts/check_edges.py out.pdf --max-bottom 10 --max-top 10 --max-center
 | **页边距 + 居中** | `check_edges.py` | 页底留白 ≤10% / 尾页 ≤15%；上下差 ≤5%；左右 ≥8px | 补内容 / 上提后文 / 调 CSS 内边距；偏 → 调 `flex center` |
 | 无 `.screen` 溢出 | `render_mobile.cjs` 报告 | `overflow_screens` 为空、退出码 0 | 拆卡 / 降密度 / 缩字号 |
 | `.screen` 填充合理 | 渲染报告 `fill` + 看图 | 各卡 ≥55%；<55% 确认是有意 hero 否则补 | 加大字号 / 补内容 / 合并卡 |
-| 图片未丢 | `pdfimages -list out.pdf \| tail -n +3 \| wc -l` | ≥ 预期数（404/CORS 失败都会漏图） | 换**验证过 200 + CORS 干净**的图 URL；破图必换 |
+| 图片未丢 | `pdfimages -list out.pdf \| tail -n +3 \| wc -l` | ≥ 预期数（404/CORS 失败都会漏图） | **下载到本地用相对路径引用**（根治 CORS，见「图片默认下载到本地」）；破图必换 |
 | 链接可点 | `pypdf` 数 `/Link` + spot-click ≥3 | 命中、能跳转；**不含 `amapuri://` 唤端 scheme** | 补真实 `<a href>`；唤端链接换 web URI |
 | 距离/通勤真实 | 核对行程里的距离 / 时长 | 来自 amap `direction_*` / `distance`，非手填猜值；调不通处已标「估」 | 补 amap 调用或标「估」 |
 | 地图链接可开 | spot-check `uri.amap.com` 链接 | 浏览器能打开、落点正确；无 `amapuri://` 唤端 scheme | 换高德 web URI |
