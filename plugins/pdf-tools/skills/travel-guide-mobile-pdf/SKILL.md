@@ -82,13 +82,12 @@ HTML → Chromium(Playwright) → PDF。强视觉攻略用 HTML+Chrome 最顺手
 **内容真实**
 - **链接必须真可点**：地图 / 订房 / 参考用真实 `<a href>`（渲染成 PDF `/Link`），**禁假链接 div**。
 - **图片默认下载到本地再引用（首选策略，根治 CORS）**：找到真实图 URL 后，**先 `curl`/`wget` 下载到 `workspace/img/`，HTML 用相对路径 `img/xxx.jpg` 引用**——渲染时是本地文件、不发跨源请求，**CORS 从根上不存在，实拍照片稳定显示**。这是默认做法，**不是兜底**。**别直接 hot-link 远程 URL**（即使 `curl` 200 也可能被 CORS 静默拦成破图，见下）。
-- **图搜链：amap POI 图(封面卡分辨率) → openverse-search → CSS 手绘。⛔ 图搜不用 stepsearch，不用 Wikimedia。**（stepsearch 只管价格/口碑/营业时间等**文本**,不拿它搜图。）按序:
-  - ① **amap POI 实拍(首选,尤其餐厅/店铺/景点)**——`maps_search_detail` 返回的 `photo` 字段(`store.is.autonavi.com/showpic/...`)是该店/该景点真实照片,最贴题。**分辨率只卡封面/满版大图**:封面/hero 图**长边 `< ~1200px` 的弃用**、转 openverse 拿大图(手机页 DPR3 满版≈1200px,小图会糊);**内页图不设门槛**(amap 的 ~500px 缩略图放内页卡片够清晰)。(量尺寸:有 PIL 用 PIL;否则 macOS `sips -g pixelWidth -g pixelHeight <f>`、Linux `identify <f>`。)
-  - ② **openverse-search(amap 没图、或封面图不够大时)**——免 key、返回 `width/height/license/url`,可**不下载先按分辨率筛**:`python3 <openverse skill 目录>/scripts/openverse.py search "<地点英文/中文>" --format json`(封面挑长边 ≥1200 的;可加 `--source wikimedia --license by,by-sa,cc0 --size large --aspect-ratio wide`),→ `python3 …/openverse.py download "<url>" -o workspace/img/xxx.jpg`。
-  - ③ **CSS/SVG 手绘(前两者都拿不到才走)**——见降级方案。
+- **图搜链：amap POI 图 → CSS 手绘。⛔ 图搜不用 stepsearch，不用 Wikimedia，不用 openverse（本环境不可达，已剥离）。**（stepsearch 只管价格/口碑/营业时间等**文本**,不拿它搜图。）按序:
+  - ① **amap POI 实拍(首选,尤其餐厅/店铺/景点)**——`maps_search_detail` 返回的 `photo` 字段(`store.is.autonavi.com/showpic/...`)是该店/该景点真实照片,最贴题。**分辨率只卡封面/满版大图**:封面/hero 图**优先挑长边 ≥ ~1200px 的**(手机页 DPR3 满版≈1200px,小图会糊);amap 只有小图时,封面**缩小展示尺寸或退 CSS**,别硬撑满版糊图;**内页图不设门槛**(amap 的 ~500px 缩略图放内页卡片够清晰)。(量尺寸:有 PIL 用 PIL;否则 macOS `sips -g pixelWidth -g pixelHeight <f>`、Linux `identify <f>`。)
+  - ② **CSS/SVG 手绘(amap 拿不到才走)**——见降级方案。
   **别凭记忆编 URL**;下载后一律以渲染后逐页看图为准。
 - **CORS 陷阱(为什么要下载而非 hot-link)**:`curl -sI` 200 是**必要不充分**——很多图床(amap `aos-comment.amap.com` / `store.is.autonavi.com` 等)**不返回 `Access-Control-Allow-Origin` 头**,Chromium 渲染 hot-link 的远程图时会被 CORS **静默拦成破图**(`curl` 查不到,CORS 是浏览器层)。**下载到本地引用就绕开整个问题**——这正是默认下载的原因。另:`<img>` 除非要 canvas 读像素,**一律别加 `crossorigin="anonymous"`**(会把本可加载的图强制转成 CORS 请求)。
-- **降级方案(amap 和 openverse 都拿不到够清晰的图才走,不是嫌麻烦的逃生门)**:**严禁 picsum.photos / placeholder.com 占位图**(随机图与目的地无关,比无图更差)。顺序:① 减到 1–2 张 hero **真图**,其余页用文字 + 排版撑视觉;② 仍无图才用 CSS `linear-gradient`/pattern/emoji/内联 SVG 做视觉替代;③ 绝不留空白图框(`<img>` 会 404 就删掉或换 CSS)。**⚠️ CSS 手绘是最后手段——默认应尽力用 amap/openverse 的真实照片,实拍产物质量显著高于全插画(实测同一 query,实拍 vs 全 CSS 插画观感差一档)。**
+- **降级方案(amap 拿不到够清晰的图才走,不是嫌麻烦的逃生门)**:**严禁 picsum.photos / placeholder.com 占位图**(随机图与目的地无关,比无图更差)。顺序:① 减到 1–2 张 hero **真图**,其余页用文字 + 排版撑视觉;② 仍无图才用 CSS `linear-gradient`/pattern/emoji/内联 SVG 做视觉替代;③ 绝不留空白图框(`<img>` 会 404 就删掉或换 CSS)。**⚠️ CSS 手绘是最后手段——默认应尽力用 amap 的真实照片,实拍产物质量显著高于全插画(实测同一 query,实拍 vs 全 CSS 插画观感差一档)。**
 - **唤端链接用 web URI**（PDF 链接点击最稳）：地图 / 导航 / 订房用 **`https://uri.amap.com/...`** web URI；**别用** `amapuri://...` 唤端 scheme——PDF 阅读器未必识别，点不动还以为是死链。
   - 单点标注：`https://uri.amap.com/marker?position=<lng>,<lat>&name=<名称>&coordinate=gaode&src=guide`
   - 导航到某点：`https://uri.amap.com/navigation?to=<lng>,<lat>,<名称>&mode=walk&coordinate=gaode&src=guide`（`mode` 取 `walk`/`car`/`bus`）
