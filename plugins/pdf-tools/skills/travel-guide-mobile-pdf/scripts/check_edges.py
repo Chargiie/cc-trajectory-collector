@@ -16,9 +16,19 @@
     python3 check_edges.py out.pdf --max-bottom 12 --max-center-delta 8 --min-edge 10
     python3 check_edges.py '$TMPDIR/pg-*.png'                                   # 直接喂已渲染 PNG
 """
-import sys, os, glob, argparse, tempfile, subprocess
+import sys, os, glob, argparse, tempfile, subprocess, re
 import numpy as np
 from PIL import Image
+
+
+def page_size_pt(pdf_path):
+    """用 pdfinfo 读页面 pt 尺寸，返回 (w, h)；读不到返回 None。"""
+    try:
+        out = subprocess.run(["pdfinfo", pdf_path], capture_output=True, text=True).stdout
+        m = re.search(r"Page size:\s*([\d.]+)\s*x\s*([\d.]+)\s*pts", out)
+        return (float(m.group(1)), float(m.group(2))) if m else None
+    except Exception:
+        return None
 
 
 def render_pdf_to_pngs(pdf_path, dpi, outdir):
@@ -98,6 +108,12 @@ def main():
                    help="左右内容到纸边的最小距离(px)；低于 = 贴边")
     ap.add_argument("--skip-cover", action="store_true", default=True, help="跳过第 1 页（封面）")
     ap.add_argument("--no-skip-cover", dest="skip_cover", action="store_false")
+    # 页面尺寸硬闸（手机竖屏 9:20 ≈ 300×667.5pt）——非此尺寸/横版 = FAIL。
+    # 通用化时用 --expect-w/--expect-h 换目标，或 --any-size 关闭本闸。
+    ap.add_argument("--expect-w", type=float, default=300.0, help="期望页宽(pt)，默认 300")
+    ap.add_argument("--expect-h", type=float, default=667.5, help="期望页高(pt)，默认 667.5")
+    ap.add_argument("--size-tol", type=float, default=12.0, help="尺寸容差(pt)")
+    ap.add_argument("--any-size", action="store_true", help="关闭页面尺寸硬闸（通用/非手机竖屏时用）")
     args = ap.parse_args()
 
     tmp = None
@@ -108,6 +124,18 @@ def main():
         pngs = sorted(glob.glob(args.src)) or sorted(glob.glob(args.src.replace("%d", "*")))
         if not pngs:
             raise SystemExit(f"找不到 PNG：{args.src}")
+
+    # 页面尺寸硬闸：非 ≈期望竖屏尺寸（如被做成 A4/横版）直接判失败
+    size_bad = False
+    if args.src.lower().endswith(".pdf") and not args.any_size:
+        sz = page_size_pt(args.src)
+        if sz:
+            w, h = sz
+            if abs(w - args.expect_w) > args.size_tol or abs(h - args.expect_h) > args.size_tol:
+                size_bad = True
+                orient = "横版" if w > h else "尺寸不符"
+                print(f"✗ 页面尺寸 {w:.0f}×{h:.0f}pt ≠ 期望 {args.expect_w:.0f}×{args.expect_h:.0f}pt（{orient}）"
+                      f" ——手机竖屏 9:20 必须用 render_mobile.cjs 出 300×667.5pt，别改成 A4/横版。")
 
     n = len(pngs)
     print(f"页数：{n}  "
@@ -157,7 +185,9 @@ def main():
               f"{left_px:>4.0f}px {right_px:>4.0f}px  {verdict} {note if is_cover else ''}")
 
     print()
-    if fails or page_count_bad:
+    if fails or page_count_bad or size_bad:
+        if size_bad:
+            print("✗ 页面尺寸不合格（见上）——用 render_mobile.cjs 重出竖屏 300×667.5pt。")
         if page_count_bad:
             print(f"✗ 页数溢出：物理页 {n} ≠ 设计页 {args.expect_pages}。")
         if fails:

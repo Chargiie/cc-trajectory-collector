@@ -82,12 +82,14 @@ HTML → Chromium(Playwright) → PDF。强视觉攻略用 HTML+Chrome 最顺手
 **内容真实**
 - **链接必须真可点**：地图 / 订房 / 参考用真实 `<a href>`（渲染成 PDF `/Link`），**禁假链接 div**。
 - **图片默认下载到本地再引用（首选策略，根治 CORS）**：找到真实图 URL 后，**先 `curl`/`wget` 下载到 `workspace/img/`，HTML 用相对路径 `img/xxx.jpg` 引用**——渲染时是本地文件、不发跨源请求，**CORS 从根上不存在，实拍照片稳定显示**。这是默认做法，**不是兜底**。**别直接 hot-link 远程 URL**（即使 `curl` 200 也可能被 CORS 静默拦成破图，见下）。
-- **图搜链：amap POI 图 → CSS 手绘。⛔ 图搜不用 stepsearch，不用 Wikimedia，不用 openverse（本环境不可达，已剥离）。**（stepsearch 只管价格/口碑/营业时间等**文本**,不拿它搜图。）按序:
-  - ① **amap POI 实拍(首选,尤其餐厅/店铺/景点)**——`maps_search_detail` 返回的 `photo` 字段(`store.is.autonavi.com/showpic/...`)是该店/该景点真实照片,最贴题。**分辨率只卡封面/满版大图**:封面/hero 图**优先挑长边 ≥ ~1200px 的**(手机页 DPR3 满版≈1200px,小图会糊);amap 只有小图时,封面**缩小展示尺寸或退 CSS**,别硬撑满版糊图;**内页图不设门槛**(amap 的 ~500px 缩略图放内页卡片够清晰)。(量尺寸:有 PIL 用 PIL;否则 macOS `sips -g pixelWidth -g pixelHeight <f>`、Linux `identify <f>`。)
-  - ② **CSS/SVG 手绘(amap 拿不到才走)**——见降级方案。
+- **图搜链：SERP 图搜 → amap POI 图 → CSS 手绘。⛔ 图搜不用 stepsearch，不用 Wikimedia，不用 openverse（本环境不可达，已剥离）。**（stepsearch 只管价格/口碑/营业时间等**文本**,不拿它搜图；坐标/路线/天气仍走 amap，见「地图数据」——这条只管**配图**。）按序:
+  - ① **SERP 图搜(首选,质量/分辨率最优)**——`python3 <serp-image-search skill 目录>/scripts/serp_image_search.py search "<关键词>" --min-long-edge 1200 --top 5`,返回候选(source / 分辨率 / `origin_image_url`)。实测拍摄角度、构图、分辨率均优于 amap(封面常有 1280–1700px 专业/媒体图);**封面/hero 挑长边 ≥ ~1200px**,`download` 子命令或 `curl` 下到本地再引用。
+  - ② **amap POI 实拍(SERP 没有/不够贴题时兜底,尤其小众店铺)**——`maps_search_detail` 的 `photo` 字段(`store.is.autonavi.com/showpic/...`)是该店/景点真实照片,在地感强、文件小。**注意多为评论区 UGC,分辨率参差(常 375–500px 缩略),拍摄角度不稳**;要高清可改评论 CDN 尺寸参数(`aos-comment.amap.com/.../comment/<hash>_2048_2048_80.jpg` 的 `_2048_2048_80` 段可调到 2048px),但仍不如 SERP 稳。内页/点位小图用 amap 缩略够清晰。(量尺寸:PIL / macOS `sips -g pixelWidth -g pixelHeight`、Linux `identify`。)
+  - ③ **CSS/SVG 手绘(前两者都拿不到才走)**——见降级方案。
   **别凭记忆编 URL**;下载后一律以渲染后逐页看图为准。
+  - **⚠️ 体积:SERP 高清图会显著撑大 PDF(实测封面级 1700px 图能把 8 页 PDF 撑到 ~38M)。分享前压缩或限长边**(如封面 ≤1600px、内页 ≤1000px;`sips -Z 1600 <f>` 或 `magick <f> -resize 1600x1600\> <f>`),避免文件过大难分享。
 - **CORS 陷阱(为什么要下载而非 hot-link)**:`curl -sI` 200 是**必要不充分**——很多图床(amap `aos-comment.amap.com` / `store.is.autonavi.com` 等)**不返回 `Access-Control-Allow-Origin` 头**,Chromium 渲染 hot-link 的远程图时会被 CORS **静默拦成破图**(`curl` 查不到,CORS 是浏览器层)。**下载到本地引用就绕开整个问题**——这正是默认下载的原因。另:`<img>` 除非要 canvas 读像素,**一律别加 `crossorigin="anonymous"`**(会把本可加载的图强制转成 CORS 请求)。
-- **降级方案(amap 拿不到够清晰的图才走,不是嫌麻烦的逃生门)**:**严禁 picsum.photos / placeholder.com 占位图**(随机图与目的地无关,比无图更差)。顺序:① 减到 1–2 张 hero **真图**,其余页用文字 + 排版撑视觉;② 仍无图才用 CSS `linear-gradient`/pattern/emoji/内联 SVG 做视觉替代;③ 绝不留空白图框(`<img>` 会 404 就删掉或换 CSS)。**⚠️ CSS 手绘是最后手段——默认应尽力用 amap 的真实照片,实拍产物质量显著高于全插画(实测同一 query,实拍 vs 全 CSS 插画观感差一档)。**
+- **降级方案(amap 拿不到够清晰的图才走,不是嫌麻烦的逃生门)**:**严禁 picsum.photos / placeholder.com 占位图**(随机图与目的地无关,比无图更差)。顺序:① 减到 1–2 张 hero **真图**,其余页用文字 + 排版撑视觉;② 仍无图才用 CSS `linear-gradient`/pattern/emoji/内联 SVG 做视觉替代;③ 绝不留空白图框(`<img>` 会 404 就删掉或换 CSS)。**⚠️ CSS 手绘是最后手段——默认应尽力用真实照片(SERP 首选、amap 兜底),实拍产物质量显著高于全插画(实测同一 query,实拍 vs 全 CSS 插画观感差一档)。**
 - **唤端链接用 web URI**（PDF 链接点击最稳）：地图 / 导航 / 订房用 **`https://uri.amap.com/...`** web URI；**别用** `amapuri://...` 唤端 scheme——PDF 阅读器未必识别，点不动还以为是死链。
   - 单点标注：`https://uri.amap.com/marker?position=<lng>,<lat>&name=<名称>&coordinate=gaode&src=guide`
   - 导航到某点：`https://uri.amap.com/navigation?to=<lng>,<lat>,<名称>&mode=walk&coordinate=gaode&src=guide`（`mode` 取 `walk`/`car`/`bus`）
@@ -140,7 +142,7 @@ python3 scripts/check_edges.py out.pdf --max-bottom 10 --max-top 10 --max-center
 
 | 检查 | 命令 / 方法 | 通过标准 | 不过怎么修 |
 |---|---|---|---|
-| 页面尺寸 | `pdfinfo out.pdf \| grep "Page size"` | ≈300×667.5pt（9:20） | 改 `@page`/渲染器尺寸 |
+| 页面尺寸（硬闸） | `check_edges.py`（内置，自动） | ≈300×667.5pt 竖屏（9:20）；横版/A4/尺寸不符 = FAIL | 用 `scripts/render_mobile.cjs` 重出（通用其它尺寸用 `--expect-w/-h` 或 `--any-size`） |
 | **页数 == 设计页数** | `check_edges.py --expect-pages <N>` | 物理页数 == `.page` 段数 | 有段超一页被拆 → 拆段 / 降密度；塌页 → 查固定高度+overflow:hidden |
 | **页边距 + 居中** | `check_edges.py` | 页底留白 ≤10% / 尾页 ≤15%；上下差 ≤5%；左右 ≥8px | 补内容 / 上提后文 / 调 CSS 内边距；偏 → 调 `flex center` |
 | 无 `.screen` 溢出 | `render_mobile.cjs` 报告 | `overflow_screens` 为空、退出码 0 | 拆卡 / 降密度 / 缩字号 |
