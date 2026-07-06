@@ -35,6 +35,13 @@ READY_DELAY = float(os.environ.get("TC_READY_DELAY", "5"))      # 清完启动�
 # 真反问了就静默此秒数后快速放行(blocked_on_ask)，不空耗。
 ASK_QUIET = int(os.environ.get("TC_ASK_QUIET", "60"))
 
+# SSE 截断兜底：响应无 stop_reason(流没干净结束) 且静默超此秒数 → 判 sse_truncated 放行。
+# 默认 120；长途游/多天复杂 query 憋大段 HTML 时单次生成可 >200s，120s 会在 HTML 落盘前误伤(全损无 PDF)，
+# 这类批跑传 TC_TRUNC_QUIET=240 放宽。代价：真截断的 run 多等 (240-120)s 才放弃。
+TRUNC_QUIET = int(os.environ.get("TC_TRUNC_QUIET", "120"))
+# 工具卡死兜底：stop=tool_use 但静默远超正常渲染耗时 → 判 tool_hang 放行。默认 600。
+TOOL_HANG_QUIET = int(os.environ.get("TC_TOOL_HANG_QUIET", "600"))
+
 # 主 loop 调用判定(过滤后台/404/424/小辅助)
 MAIN_MIN_TOOLS = 10
 
