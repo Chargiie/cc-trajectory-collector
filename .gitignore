@@ -1,0 +1,12 @@
+# 含 auth token 与产物,勿入库
+runs/
+__pycache__/
+*.pyc
+.DS_Store
+logs/
+
+# 密钥 / 备份 / 产物
+key.txt
+*.bak-*
+plugins/pdf-tools.bak-*/
+_disabled_skills/
